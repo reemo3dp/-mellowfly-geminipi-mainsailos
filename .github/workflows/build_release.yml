@@ -3,30 +3,32 @@ name: "Builds the given release from mellowfly-geminipi-armbian"
 on:
   workflow_dispatch:
     inputs:
-      release:
+      release_id:
         description: "The release to build"
         required: true
   repository_dispatch:
     types: [new-mellowfly-geminipi-armbian-release]
 
 jobs:
-  latest_mfgp_release:
+  latest_mfgpa_release:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
-      release_name: ${{ fromJson(steps.mfgp-release.outputs.data).name }}
+      release_name: ${{ fromJson(steps.mfgpa-release.outputs.data).name }}
+      release_tag_name: ${{ fromJson(steps.mfgpa-release.outputs.data).tag_name }}
     steps:
-      - name: Identify release
+      - name: Identify mfgpa release
         id: release
         run: |
-          if [ -n "${{ github.event.inputs.release }}" ]; then
-            echo "release_id=${{ github.event.inputs.release }}" >> $GITHUB_OUTPUT
+          set -x
+          if [ -n "${{ github.event.inputs.release_id }}" ]; then
+            echo "release_id=${{ github.event.inputs.release_id }}" >> $GITHUB_OUTPUT
           else
-            echo "release_id=${{ github.event.client_payload.release }}" >> $GITHUB_OUTPUT
+            echo "release_id=${{ github.event.client_payload.release_id }}" >> $GITHUB_OUTPUT
           fi
-      - name: Retrieve MellowFly-GeminiPi Release
+      - name: Retrieve MellowFly-GeminiPi Armbian Release
         uses: octokit/request-action@v2.x
-        id: mfgp-release
+        id: mfgpa-release
         with:
           route: GET /repos/{owner}/{repo}/releases/{release_id}
           owner: reemo3dp
@@ -41,15 +43,57 @@ jobs:
           echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
         env:
           GITHUB_OUTPUT: ${{ steps.release.outputs.release_id }}
-          RELEASE: ${{ steps.mfgp-release.outputs.data }}
+          RELEASE: ${{ steps.mfgpa-release.outputs.data }}
+
+  latest_mainsailos_release:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ fromJson(steps.mainsailos-release.outputs.data).tag_name }}
+    steps:
+      - uses: octokit/request-action@v2.x
+        id: mainsailos-release
+        with:
+          route: GET /repos/{owner}/{repo}/releases/latest
+          owner: mainsail-crew
+          repo: mainsailos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create_draft_release:
+    runs-on: ubuntu-latest
+    needs:
+      - latest_mfgpa_release
+      - latest_mainsailos_release
+    outputs:
+      release_id: ${{ steps.release.outputs.id }}
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v3
+        with:
+          path: mellowfly-geminipi-mainsailos
+      - name: Get time
+        id: time
+        uses: nanzm/get-time-action@v1.1
+        with:
+          format: "YYYYMMDD-HHmm"
+      - name: Create empty release
+        id: release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: "MainsailOS ${{ needs.latest_mainsailos_release.outputs.tag_name }} for MellowFly-GeminiPi ${{ needs.latest_mfgpa_release.outputs.release_tag_name }}"
+          tag_name: ${{ steps.time.outputs.time }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: true
 
   build_release:
     runs-on: ubuntu-latest
     needs:
-      - latest_mfgp_release
+      - create_draft_release
+      - latest_mfgpa_release
+      - latest_mainsailos_release
     strategy:
-      matrix: 
-        downloadUrl: ${{fromJson(needs.latest_mfgp_release.outputs.matrix)}}
+      matrix:
+        downloadUrl: ${{fromJson(needs.latest_mfgpa_release.outputs.matrix)}}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -63,19 +107,11 @@ jobs:
           echo 'export DOWNLOAD_URL_IMAGE' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
           echo 'export DOWNLOAD_URL_CHECKSUM' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
           cat mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
-      - uses: octokit/request-action@v2.x
-        id: mainsailos-release
-        with:
-          route: GET /repos/{owner}/{repo}/releases/latest
-          owner: mainsail-crew
-          repo: mainsailos
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           repository: mainsail-crew/mainsailos
-          ref: ${{ fromJson(steps.mainsailos-release.outputs.data).tag_name }}
+          ref: ${{ needs.latest_mainsailos_release.outputs.tag_name }}
           path: repository
           submodules: true
       - name: Copy files from this repository to mainsailOS
@@ -85,3 +121,67 @@ jobs:
         uses: ./repository/.github/actions/build
         with:
           config: armbian/mellowfly-geminipi
+      - name: Rename and compress image
+        run: |
+          # Identify the image
+          IMAGE=$(basename $(find $GITHUB_WORKSPACE/repository/src/workspace/ -maxdepth 0 -name '*.img'))
+          # Strip Armbian, add MainsailOS plus version
+          NEW_IMAGE="MainsailOS_${{ needs.latest_mainsailos_release.outputs.tag_name }}_${IMAGE#Armbian-unofficial}.img"
+
+          mv -v "$GITHUB_WORKSPACE/repository/src/workspace/$IMAGE" "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"
+          xz -e "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"
+          sha256sum "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE.xz" > "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE.xz.sha256"
+      - name: Upload Image to Release
+        uses: xresloader/upload-to-github-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ needs.create_draft_release.outputs.release_id }}
+          file: ./repository/src/workspace/*.img.xz
+          draft: true
+
+      - name: Upload Checksum to Release
+        uses: xresloader/upload-to-github-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ needs.create_draft_release.outputs.release_id }}
+          file: ./repository/src/workspace/*.img.xz.sha256
+          draft: true
+
+  finish:
+    name: Publish Release
+    needs: [create_draft_release, build_release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish Release
+        uses: StuYarrow/publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          id: ${{ needs.create_draft_release.outputs.release_id }}
+      - name: Github Releases To Discord
+        uses: reemo3dp/github-releases-to-discord@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          release_id: ${{ needs.create_draft_release.outputs.release_id }}
+          webhook_url: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          color: "2105893"
+          username: "Release Changelog"
+          avatar_url: "https://cdn.discordapp.com/avatars/487431320314576937/bd64361e4ba6313d561d54e78c9e7171.png"
+          footer_title: "Changelog"
+          footer_icon_url: "https://cdn.discordapp.com/avatars/487431320314576937/bd64361e4ba6313d561d54e78c9e7171.png"
+          footer_timestamp: true
+
+  cleanup:
+    name: Cleanup
+    needs: [build_release, finish]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete drafts
+        uses: hugo19941994/delete-draft-releases@v1.0.0
+        with:
+          threshold: 2d
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

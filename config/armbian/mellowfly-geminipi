@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Shebang for better file detection
+# shellcheck enable=require-variable-braces
+
+BASE_ARCH="arm64"
+export BASE_ARCH
+
+### JSON sniplet Setup
+### NOTE: Please see all config files for setup variables!!!
+# shellcheck disable=SC2034
+JSON_PRETTY_SBC_NAME="Mellow Fly Gemini Pi"
+# shellcheck disable=SC2034
+JSON_SUPPORTED_SBC="mellowflygeminipi-64bit"

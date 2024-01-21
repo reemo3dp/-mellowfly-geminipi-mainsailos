@@ -10,8 +10,11 @@ on:
     types: [new-mellowfly-geminipi-armbian-release]
 
 jobs:
-  build_release:    
+  latest_mfgp_release:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      release_name: ${{ fromJson(steps.mfgp-release.outputs.data).name }}
     steps:
       - name: Identify release
         id: release
@@ -21,6 +24,45 @@ jobs:
           else
             echo "release_id=${{ github.event.client_payload.release }}" >> $GITHUB_OUTPUT
           fi
+      - name: Retrieve MellowFly-GeminiPi Release
+        uses: octokit/request-action@v2.x
+        id: mfgp-release
+        with:
+          route: GET /repos/{owner}/{repo}/releases/{release_id}
+          owner: reemo3dp
+          repo: mellowfly-geminipi-armbian
+          release_id: ${{ steps.release.outputs.release_id }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set matrix
+        id: set-matrix
+        run: |
+          MATRIX=$(echo $RELEASE | jq -c '[.assets[] | select(.name | endswith(".img.xz")) | .browser_download_url]')
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_OUTPUT: ${{ steps.release.outputs.release_id }}
+          RELEASE: ${{ steps.mfgp-release.outputs.data }}
+
+  build_release:
+    runs-on: ubuntu-latest
+    needs:
+      - latest_mfgp_release
+    strategy:
+      matrix: 
+        downloadUrl: ${{fromJson(needs.latest_mfgp_release.outputs.matrix)}}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: mellowfly-geminipi-mainsailos
+      - name: Update Config File
+        run: |
+          echo '' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
+          echo 'DOWNLOAD_URL_IMAGE=${{ matrix.downloadUrl }}' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
+          echo 'DOWNLOAD_URL_CHECKSUM=${{ matrix.downloadUrl }}.sha256' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
+          echo 'export DOWNLOAD_URL_IMAGE' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
+          echo 'export DOWNLOAD_URL_CHECKSUM' >> mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
+          cat mellowfly-geminipi-mainsailos/config/armbian/mellowfly-geminipi
       - uses: octokit/request-action@v2.x
         id: mainsailos-release
         with:
@@ -28,17 +70,18 @@ jobs:
           owner: mainsail-crew
           repo: mainsailos
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}      
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          path: mellowfly-geminipi-mainsailos
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           repository: mainsail-crew/mainsailos
           ref: ${{ fromJson(steps.mainsailos-release.outputs.data).tag_name }}
-          path: mainsailos
-
-
-   
+          path: repository
+          submodules: true
+      - name: Copy files from this repository to mainsailOS
+        run: |
+          rsync -av "$GITHUB_WORKSPACE/mellowfly-geminipi-mainsailos/config/" "$GITHUB_WORKSPACE/repository/config"
+      - name: Run build job
+        uses: ./repository/.github/actions/build
+        with:
+          config: armbian/mellowfly-geminipi

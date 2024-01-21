@@ -1,0 +1,44 @@
+name: "Builds the given release from mellowfly-geminipi-armbian"
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "The release to build"
+        required: true
+  repository_dispatch:
+    types: [new-mellowfly-geminipi-armbian-release]
+
+jobs:
+  build_release:    
+    runs-on: ubuntu-latest
+    steps:
+      - name: Identify release
+        id: release
+        run: |
+          if [ -n "${{ github.event.inputs.release }}" ]; then
+            echo "release_id=${{ github.event.inputs.release }}" >> $GITHUB_OUTPUT
+          else
+            echo "release_id=${{ github.event.client_payload.release }}" >> $GITHUB_OUTPUT
+          fi
+      - uses: octokit/request-action@v2.x
+        id: mainsailos-release
+        with:
+          route: GET /repos/{owner}/{repo}/releases/latest
+          owner: mainsail-crew
+          repo: mainsailos
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          path: mellowfly-geminipi-mainsailos
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          repository: mainsail-crew/mainsailos
+          ref: ${{ fromJson(steps.mainsailos-release.outputs.data).tag_name }}
+          path: mainsailos
+
+
+   

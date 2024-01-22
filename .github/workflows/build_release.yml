@@ -123,10 +123,11 @@ jobs:
           config: armbian/mellowfly-geminipi
       - name: Rename and compress image
         run: |
+          set -x
           # Identify the image
-          IMAGE=$(basename $(find $GITHUB_WORKSPACE/repository/src/workspace/ -maxdepth 0 -name '*.img'))
+          IMAGE=$(basename $(find $GITHUB_WORKSPACE/repository/src/workspace/ -maxdepth 1 -name '*.img'))
           # Strip Armbian, add MainsailOS plus version
-          NEW_IMAGE="MainsailOS_${{ needs.latest_mainsailos_release.outputs.tag_name }}_${IMAGE#Armbian-unofficial}.img"
+          NEW_IMAGE="MainsailOS_${{ needs.latest_mainsailos_release.outputs.tag_name }}_${IMAGE#Armbian-unofficial_}"
 
           mv -v "$GITHUB_WORKSPACE/repository/src/workspace/$IMAGE" "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"
           xz -e "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"

@@ -129,16 +129,18 @@ jobs:
           # Strip Armbian, add MainsailOS plus version
           NEW_IMAGE="MainsailOS_${{ needs.latest_mainsailos_release.outputs.tag_name }}_${IMAGE#Armbian-unofficial_}"
 
-          mv -v "$GITHUB_WORKSPACE/repository/src/workspace/$IMAGE" "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"
-          xz -e "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE"
-          sha256sum "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE.xz" > "$GITHUB_WORKSPACE/repository/src/workspace/$NEW_IMAGE.xz.sha256"
+          mkdir "$GITHUB_WORKSPACE/upload/" || true
+
+          mv -v "$GITHUB_WORKSPACE/repository/src/workspace/$IMAGE" "$GITHUB_WORKSPACE/upload/$NEW_IMAGE"
+          xz -efkvz9 -T0 "$GITHUB_WORKSPACE/upload/$NEW_IMAGE" || true
+          sha256sum "$GITHUB_WORKSPACE/upload/$NEW_IMAGE.xz" > "$GITHUB_WORKSPACE/upload/$NEW_IMAGE.xz.sha256"
       - name: Upload Image to Release
         uses: xresloader/upload-to-github-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           release_id: ${{ needs.create_draft_release.outputs.release_id }}
-          file: ./repository/src/workspace/*.img.xz
+          file: ./upload/*.img.xz
           draft: true
 
       - name: Upload Checksum to Release
@@ -147,7 +149,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           release_id: ${{ needs.create_draft_release.outputs.release_id }}
-          file: ./repository/src/workspace/*.img.xz.sha256
+          file: ./upload/*.img.xz.sha256
           draft: true
 
   finish:

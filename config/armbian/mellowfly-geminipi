@@ -5,6 +5,9 @@
 BASE_ARCH="arm64"
 export BASE_ARCH
 
+BASE_BOOT_MOUNT_PATH="/boot"
+export BASE_BOOT_MOUNT_PATH
+
 ### JSON sniplet Setup
 ### NOTE: Please see all config files for setup variables!!!
 # shellcheck disable=SC2034
